@@ -11,6 +11,11 @@
       </div>
     </header>
 
+    <p class="notice-bar">
+      当前身份：{{ identity.name }}（{{ identity.unit }} · {{ identity.region }}）。
+      权限口径：仅责任单位可处理整改任务，跨区域只读；验收结论确认后整改事项由验收链路自动开具。
+    </p>
+
     <div class="stat-row">
       <article v-for="item in stats" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
@@ -46,15 +51,18 @@
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
-            </button>
+            <template v-if="handleCheck(row).ok">
+              <button
+                v-for="action in actions"
+                :key="action"
+                class="link"
+                type="button"
+                @click="runAction(action, row)"
+              >
+                {{ action }}
+              </button>
+            </template>
+            <span v-else class="legend-item">{{ handleCheck(row).reason }}</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -66,6 +74,7 @@
     <footer class="page-foot">
       <span>共 {{ total }} 条整改跟踪记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+      <span v-if="okMessage" class="ok-text">{{ okMessage }}</span>
     </footer>
   </section>
 </template>
@@ -73,23 +82,25 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+import { runRectificationAction } from '@/api/acceptance-service'
+import { downloadEntries, listEntries, moduleMeta } from '@/api/local-service'
+import { canHandleRectification } from '@/data/permissions'
 import type { EntryRow } from '@/data/types'
+import { useSessionStore } from '@/stores/session'
 
 const meta = moduleMeta('rectification')
-const columns = ["任务编号", "验收编号", "整改内容", "责任单位", "整改期限", "整改措施", "复核人", "整改状态"]
+const columns = ["任务编号", "验收编号", "整改内容", "责任单位", "所属区域", "整改期限", "整改措施", "复核人"]
 const actions = ["开始整改", "提交复核", "确认复核"]
 const statuses = ["待整改", "整改中", "已整改", "已复核", "逾期未改"]
 const stats = [{"label": "待整改数", "value": 0}, {"label": "整改中数", "value": 0}, {"label": "逾期未改数", "value": 0}]
 
+const store = useSessionStore()
+const identity = computed(() => store.identity)
+
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const okMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -98,6 +109,10 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function handleCheck(row: EntryRow) {
+  return canHandleRectification(identity.value, row)
+}
 
 function resetFilters() {
   filters.value = {}
@@ -109,16 +124,18 @@ function exportRows() {
 }
 
 function openCreate() {
-  errorMessage.value = '整改任务登记入口尚未接入审批流'
+  errorMessage.value = '整改任务由验收结论确认后自动开具，不单独登记'
 }
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  okMessage.value = ''
+  const result = runRectificationAction(Number(row.id), identity.value, action)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  okMessage.value = result.message
   reload()
 }
 

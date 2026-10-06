@@ -5,6 +5,10 @@ import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } f
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
 
+// 验收与整改已切换到归属权限链路（见 api/acceptance-service.ts），通用动作入口对这两个模块关闭，
+// 防止绕过「本组提交 / 组长定结论 / 跨区域只读」的口径直接改状态。
+const GOVERNED_MODULES = new Set(['acceptance', 'rectification'])
+
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
   if (!meta) {
@@ -30,6 +34,9 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
 
 export function runAction(key: string, id: number, action: string): ActionResult {
   const meta = moduleMeta(key)
+  if (GOVERNED_MODULES.has(key)) {
+    return { ok: false, message: `${meta.entity}已纳入归属权限流程，请在列表或详情页按权限操作` }
+  }
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
@@ -61,12 +68,19 @@ export function resetModule(key: string): PageResult {
   return listEntries(key)
 }
 
+function csvCell(value: EntryRow[string]): string {
+  if (Array.isArray(value)) {
+    return JSON.stringify(value)
+  }
+  return String(value ?? '')
+}
+
 export function exportEntries(key: string): { filename: string; content: string } {
   const meta = moduleMeta(key)
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
   for (const row of listRows(key)) {
-    lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
+    lines.push([row.id, ...meta.fields.map((field) => csvCell(row[field])), row.status].join(','))
   }
   return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
 }

@@ -11,6 +11,11 @@
       </div>
     </header>
 
+    <p class="notice-bar">
+      当前身份：{{ identity.name }}（{{ identity.unit }} · {{ identity.region }}）。
+      权限口径：本组成员提交会签、组长确认结论、跨区域只读；报告归属按登记时的单位解释。
+    </p>
+
     <div class="stat-row">
       <article v-for="item in stats" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
@@ -46,15 +51,16 @@
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
+            <RouterLink class="link" :to="`/acceptance/${row.id}`">详情</RouterLink>
             <button
-              v-for="action in actions"
-              :key="action"
+              v-if="canStart(row)"
               class="link"
               type="button"
-              @click="runAction(action, row)"
+              @click="start(row)"
             >
-              {{ action }}
+              启动验收
             </button>
+            <span v-if="readonlyReason(row)" class="legend-item">{{ readonlyReason(row) }}</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -64,8 +70,9 @@
     </table>
 
     <footer class="page-foot">
-      <span>共 {{ total }} 条工程验收记录</span>
+      <span>共 {{ total }} 条工程验收记录 · 结论确认请在详情页按权限操作</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+      <span v-if="okMessage" class="ok-text">{{ okMessage }}</span>
     </footer>
   </section>
 </template>
@@ -73,23 +80,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+import { startAcceptance } from '@/api/acceptance-service'
+import { downloadEntries, listEntries, moduleMeta } from '@/api/local-service'
+import { canSubmitCountersign, isCrossRegion } from '@/data/permissions'
 import type { EntryRow } from '@/data/types'
+import { useSessionStore } from '@/stores/session'
 
 const meta = moduleMeta('acceptance')
-const columns = ["验收编号", "项目编号", "验收类型", "验收日期", "验收组成员", "验收结论", "整改意见", "验收状态"]
-const actions = ["启动验收", "确认通过", "要求整改"]
+const columns = ["验收编号", "项目编号", "验收类型", "验收日期", "验收组组长", "归属单位", "所属区域"]
 const statuses = ["待验收", "验收中", "验收通过", "需整改", "已驳回"]
 const stats = [{"label": "待验收项目", "value": 0}, {"label": "通过项目数", "value": 0}, {"label": "整改中项目", "value": 0}]
+
+const store = useSessionStore()
+const identity = computed(() => store.identity)
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const okMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -98,6 +106,17 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function canStart(row: EntryRow): boolean {
+  return row.status === '待验收' && canSubmitCountersign(identity.value, row).ok
+}
+
+function readonlyReason(row: EntryRow): string {
+  if (isCrossRegion(identity.value, row)) {
+    return '跨区域只读'
+  }
+  return ''
+}
 
 function resetFilters() {
   filters.value = {}
@@ -112,13 +131,15 @@ function openCreate() {
   errorMessage.value = '验收报告登记入口尚未接入审批流'
 }
 
-function runAction(action: string, row: EntryRow) {
+function start(row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  okMessage.value = ''
+  const result = startAcceptance(Number(row.id), identity.value)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  okMessage.value = result.message
   reload()
 }
 
