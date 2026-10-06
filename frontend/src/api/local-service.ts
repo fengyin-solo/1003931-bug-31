@@ -66,7 +66,14 @@ export function exportEntries(key: string): { filename: string; content: string 
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
   for (const row of listRows(key)) {
-    lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
+    lines.push([
+      row.id,
+      ...meta.fields.map((field) => {
+        const value = row[field]
+        return Array.isArray(value) ? value.join('、') : (value ?? '')
+      }),
+      row.status,
+    ].join(','))
   }
   return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
 }
